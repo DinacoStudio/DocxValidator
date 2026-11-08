@@ -42,7 +42,8 @@ if __name__ == "__main__":
         TablesFormatRule(),
         FormulasRule(),
         ListsFormatRule(),
-        DashesRule()
+        DashesRule(),
+        WhiteFillRule()
     ])
     docx_path = Path(args.input_file)
     report = validator.validate(str(docx_path.absolute()))
