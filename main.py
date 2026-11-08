@@ -1,4 +1,6 @@
 from docx_rules import *
+from docx_notes import make_notes_docx
+from docx_fixed import create_fixed_docx
 from argparse import ArgumentParser, Namespace
 from colors import print_color
 from pathlib import Path
@@ -60,7 +62,36 @@ if __name__ == "__main__":
         __import__("sys").exit(2)
     if report == []:
         print_color("Все в норме!", Fore.GREEN)
+        if args.make_notes:
+            print_color("Замечаний нет — копия с комментариями не требуется.", Fore.CYAN)
+        if args.create_fixed:
+            fixed_path = docx_path.with_name(docx_path.stem + "_исправленный.docx")
+            create_fixed_docx(str(docx_path.absolute()), str(fixed_path))
+            print_color(f"Исправленная версия сохранена: {fixed_path}", Fore.GREEN)
         __import__("sys").exit(0)
+
+    print_color(f"Найдено нарушений: {len(report)}\n", Fore.RED)
+    for item in report:
+        print_color(f"[{item.severity.value}] {item.rule_name} | {item.location}", Fore.RED if item.severity.value == "ERR" else Fore.YELLOW)
+        print(f"    -> {item.message}")
+
+    if args.make_notes:
+        notes_path = docx_path.with_name(docx_path.stem + "_замечания.docx")
+        placed, unresolved = make_notes_docx(str(docx_path.absolute()), report, str(notes_path))
+        print_color(f"\nСоздана копия с замечаниями: {notes_path} (комментариев: {placed}" +
+                    (f", не привязано к абзацам: {unresolved}" if unresolved else "") + ")", Fore.GREEN)
+
+    if args.create_fixed:
+        fixed_path = docx_path.with_name(docx_path.stem + "_исправленный.docx")
+        stats = create_fixed_docx(str(docx_path.absolute()), str(fixed_path))
+        print_color(f"\nСоздана исправленная версия: {fixed_path}", Fore.GREEN)
+        for name, count in stats.items():
+            print(f"    исправлено «{name}»: {count}")
+        fixed_report = validator.validate(str(fixed_path))
+        print_color(f"Нарушений было: {len(report)}, в исправленной версии осталось: {len(fixed_report)}", Fore.CYAN)
+
+    print_color("Внимание! Программа может ошибаться в поиске ошибок в формате документа! Если вы считаете, что нарушения ошибочны, то можете спокойно игнорировать", Fore.CYAN)
+    __import__("sys").exit(1)
 
     print_color(f"Найдено нарушений: {len(report)}\n", Fore.RED)
     for item in report:
