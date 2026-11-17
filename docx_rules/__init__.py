@@ -18,6 +18,7 @@ from docx_rules.page_numbering import PageNumberingRule
 from docx_rules.title_page import TitlePageRule
 from docx_rules.table_of_contents import TableOfContentsRule
 from docx_rules.section_format import SectionFormatRule
+from docx_rules.breaks_and_pagination import BreaksAndPaginationRule
 from docx_rules.section_page_fill import SectionPageFillRule
 from docx_rules.references_list import ReferencesListRule
 from docx_rules.introduction_content import IntroductionContentRule
@@ -41,4 +42,5 @@ __all__ = [
     'ReferencesListRule', 'IntroductionContentRule', 'ParagraphConclusionRule',
     'SourceReferencesRule', 'AppendixFormatRule', 'FiguresRule', 'TablesFormatRule',
     'FormulasRule', 'ListsFormatRule', 'DashesRule', 'WhiteFillRule',
+    'BreaksAndPaginationRule',
 ]
