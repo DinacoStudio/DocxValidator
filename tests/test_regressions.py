@@ -258,8 +258,9 @@ class IntegrationTests(unittest.TestCase):
             importlib.reload(main)
         self.assertEqual('', output.getvalue())
         rules = main.default_rules()
-        # TextGridRule не входит в требования МДК 04.01 и в стандартный набор
-        self.assertEqual(0, sum(isinstance(r, TextGridRule) for r in rules))
+        # Точная сетка строк обязательна: проверяется согласованность linePitch
+        # с рабочей высотой страницы при полях 2 см
+        self.assertEqual(1, sum(isinstance(r, TextGridRule) for r in rules))
         self.assertEqual(1, sum(isinstance(r, TableOfContentsRule) for r in rules))
 
     def test_manual_toc_is_rejected_but_legacy_spacing_helper_remains_tested(self):
