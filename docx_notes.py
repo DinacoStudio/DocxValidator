@@ -13,6 +13,7 @@ import re
 from docx import Document
 from docx.text.paragraph import Paragraph
 from docx_rules import Violation
+from metadata_utils import clear_python_docx_metadata
 
 AUTHOR = "DocxValidator"
 INITIALS = "DV"
@@ -151,4 +152,5 @@ def make_notes_docx(src_path: str, violations: List[Violation], dst_path: str) -
 
     doc.core_properties.comments = f"Замечания DocxValidator от {datetime.now():%d.%m.%Y %H:%M}"
     doc.save(dst_path)
+    clear_python_docx_metadata(dst_path)
     return placed, unresolved
