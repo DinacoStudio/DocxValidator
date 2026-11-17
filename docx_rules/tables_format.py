@@ -9,7 +9,7 @@ from docx.oxml.ns import qn
 from typing import List, Optional
 
 from docx_rules.base import BaseRule, Severity, Violation
-from docx_rules.helpers import effective
+from docx_rules.helpers import effective, full_text, has_field
 from docx_rules.classification import classify_paragraphs
 
 
@@ -17,6 +17,8 @@ class TablesFormatRule(BaseRule):
     LABEL_REGEX = re.compile(r'^Таблица\s+(\d+)\s*$', re.IGNORECASE)
     CONTINUATION_REGEX = re.compile(r'^Продолжение таблицы\s+(\d+)\s*$', re.IGNORECASE)
     REF_REGEX = re.compile(r'\(\s*см\.\s*табл\.?\s*(\d+)\s*\)', re.IGNORECASE)
+    NATURAL_REF_REGEX = re.compile(r'(?<![\w(])в\s+таблице\s+(\d+)\b', re.IGNORECASE)
+    REQUIRED_BORDERS = ('top', 'left', 'bottom', 'right', 'insideH', 'insideV')
 
     def __init__(self, target_font_name: str = "Times New Roman", target_font_size: float = 14.0):
         self.font_name = target_font_name
@@ -62,6 +64,48 @@ class TablesFormatRule(BaseRule):
             indent = paragraph.style.paragraph_format.first_line_indent
         return indent is not None and indent.cm > 0.05
 
+    @classmethod
+    def _missing_borders(cls, table) -> List[str]:
+        """Границы с учётом прямых свойств и цепочки табличных стилей."""
+        border_values = {}
+        sources = [table._tbl.tblPr]
+        style = table.style
+        seen = set()
+        while style is not None and style.style_id not in seen:
+            seen.add(style.style_id)
+            tbl_pr = style.element.find(qn('w:tblPr'))
+            if tbl_pr is not None:
+                sources.append(tbl_pr)
+            style = style.base_style
+        has_border_declaration = False
+        for tbl_pr in sources:
+            borders = tbl_pr.find(qn('w:tblBorders'))
+            if borders is None:
+                continue
+            has_border_declaration = True
+            for name in cls.REQUIRED_BORDERS:
+                if name in border_values:
+                    continue
+                node = borders.find(qn(f'w:{name}'))
+                if node is not None:
+                    border_values[name] = node.get(qn('w:val'), 'single')
+        # При полном отсутствии tblBorders итог может задаваться темой Word; не выдаём
+        # ложную ошибку. Явная, но неполная/отключённая конфигурация проверяется строго.
+        if not has_border_declaration:
+            return []
+        return [name for name in cls.REQUIRED_BORDERS
+                if border_values.get(name) in (None, 'nil', 'none')]
+
+    @staticmethod
+    def _first_row_repeats(table) -> bool:
+        if not table.rows:
+            return False
+        tr_pr = table.rows[0]._tr.find(qn('w:trPr'))
+        if tr_pr is None:
+            return False
+        header = tr_pr.find(qn('w:tblHeader'))
+        return header is not None and header.get(qn('w:val'), 'true') not in ('0', 'false', 'off')
+
     def check(self, doc: Document) -> List[Violation]:
         violations: List[Violation] = []
         rule_name = "TablesFormatRule"
@@ -94,13 +138,20 @@ class TablesFormatRule(BaseRule):
             if back:
                 m = self.CONTINUATION_REGEX.match(back[0][1].text.strip())
                 if m:
+                    continuation_num = int(m.group(1))
                     is_continuation = True
+                    if continuation_num not in labeled_numbers:
+                        violations.append(Violation(
+                            rule_name, Severity.WARNING,
+                            f"Продолжение таблицы {continuation_num}",
+                            (f"Неоднозначная надпись 'Продолжение таблицы {continuation_num}': "
+                             "ранее таблица с таким номером не распознана. Проверьте номер и связь с исходной таблицей.")))
                     if back[0][1].alignment != WD_ALIGN_PARAGRAPH.RIGHT:
                         violations.append(
                             Violation(
                                 rule_name=rule_name,
                                 severity=Severity.ERROR,
-                                location=f"Продолжение таблицы {m.group(1)}",
+                                location=f"Продолжение таблицы {continuation_num}",
                                 message="Надпись 'Продолжение таблицы N' должна быть выровнена по правому краю."
                             )
                         )
@@ -114,8 +165,21 @@ class TablesFormatRule(BaseRule):
                             label_para = back[1][1]
                             title_para = back[0][1]
 
+            missing_borders = self._missing_borders(table)
+            if missing_borders:
+                violations.append(Violation(
+                    rule_name, Severity.ERROR, table_loc,
+                    "У таблицы должны быть видимые внешние и внутренние границы "
+                    f"(не найдены: {', '.join(missing_borders)})."))
+            # У короткой таблицы нет перехода на следующую страницу; повторяемую шапку
+            # требуем только там, где она потенциально нужна.
+            if len(table.rows) > 2 and not self._first_row_repeats(table):
+                violations.append(Violation(
+                    rule_name, Severity.WARNING, table_loc,
+                    "Первая строка таблицы должна быть помечена w:tblHeader для повторения шапки на следующих страницах."))
+
             if is_continuation:
-                continue  # Продолжение таблицы: надпись и название не требуются
+                continue  # Название для продолжения не требуется; общие свойства уже проверены
 
             if label_para is None:
                 violations.append(
@@ -311,6 +375,9 @@ class TablesFormatRule(BaseRule):
                             message=f"Ссылка на таблицу '(см.табл. {num})' должна стоять в конце абзаца перед точкой."
                         )
                     )
+            # Естественная ссылка может находиться внутри предложения: «данные приведены в таблице 2».
+            referenced_numbers.extend(
+                int(match.group(1)) for match in self.NATURAL_REF_REGEX.finditer(text))
 
         for num in sorted(set(referenced_numbers)):
             if num not in labeled_numbers:

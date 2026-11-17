@@ -9,7 +9,7 @@ from typing import List
 
 from docx_rules.base import BaseRule, Severity, Violation
 from docx_rules.classification import classify_paragraphs
-from docx_rules.helpers import is_toc_line
+from docx_rules.helpers import full_text, is_toc_line, effective, is_heading
 
 class BreaksAndPaginationRule(BaseRule):
     """Осторожные предупреждения о ручной пагинации и небезопасных настройках абзацев."""

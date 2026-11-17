@@ -13,7 +13,84 @@ from docx_rules.classification import classify_paragraphs
 
 
 class TableOfContentsRule(BaseRule):
+    """Требует автоматическое поле TOC с настройкой заголовков и сохранённым результатом."""
+    @staticmethod
+    def _toc_fields(doc: Document):
+        fields = []
+        for simple in doc.element.body.iter(qn('w:fldSimple')):
+            instruction = simple.get(qn('w:instr'), '')
+            if re.match(r'^\s*TOC\b', instruction, re.I):
+                cache = ''.join(node.text or '' for node in simple.iter(qn('w:t')))
+                fields.append((instruction, cache))
+
+        stack = []
+        for node in doc.element.body.iter():
+            if node.tag == qn('w:fldChar'):
+                kind = node.get(qn('w:fldCharType'))
+                if kind == 'begin':
+                    stack.append({'instruction': '', 'cache': '', 'separated': False})
+                elif kind == 'separate' and stack:
+                    stack[-1]['separated'] = True
+                elif kind == 'end' and stack:
+                    field = stack.pop()
+                    if re.match(r'^\s*TOC\b', field['instruction'], re.I):
+                        fields.append((field['instruction'], field['cache']))
+            elif node.tag == qn('w:instrText') and stack and not stack[-1]['separated']:
+                stack[-1]['instruction'] += node.text or ''
+            elif node.tag in (qn('w:t'), qn('w:tab')):
+                for field in stack:
+                    if field['separated']:
+                        field['cache'] += ('\t' if node.tag == qn('w:tab') else node.text or '')
+        return fields
+
+    @staticmethod
+    def _has_heading_settings(instruction: str) -> bool:
+        return bool(re.search(r'\\o\s+"\s*\d+\s*-\s*\d+\s*"', instruction, re.I)
+                    or re.search(r'\\t\s+"[^"\r\n]+"', instruction, re.I)
+                    or re.search(r'(?:^|\s)\\u(?:\s|$)', instruction, re.I))
+
     def check(self, doc: Document) -> List[Violation]:
+        rule_name = 'TableOfContentsRule'
+        fields = self._toc_fields(doc)
+        if not fields:
+            has_manual_heading = any(
+                p.text.strip().upper() in ('СОДЕРЖАНИЕ', 'ОГЛАВЛЕНИЕ') for p in doc.paragraphs)
+            return [Violation(
+                rule_name, Severity.ERROR,
+                'Оглавление' if has_manual_heading else 'Документ',
+                ('Обнаружено ручное оглавление. Требуется настоящее автоматическое поле TOC Word.'
+                 if has_manual_heading else
+                 'Автоматическое оглавление не найдено: требуется настоящее поле TOC Word.'))
+            ]
+
+        violations = []
+        if len(fields) > 1:
+            violations.append(Violation(
+                rule_name, Severity.WARNING, 'Оглавление',
+                f'Найдено несколько полей TOC ({len(fields)}); проверьте, что оглавление не продублировано.'))
+        for index, (instruction, cache) in enumerate(fields, 1):
+            location = 'Оглавление' if len(fields) == 1 else f'Оглавление, поле TOC {index}'
+            if not self._has_heading_settings(instruction):
+                violations.append(Violation(
+                    rule_name, Severity.ERROR, location,
+                    'В поле TOC не задан источник заголовков (ожидается ключ \\o, \\t или \\u).'))
+            if not cache.strip():
+                violations.append(Violation(
+                    rule_name, Severity.ERROR, location,
+                    'Кэш поля TOC пуст: обновите оглавление в Word, чтобы в поле были сохранены пункты.'))
+            elif not re.search(r'(?:\t|\.{2,}|…)\s*\d+\b', cache):
+                violations.append(Violation(
+                    rule_name, Severity.ERROR, location,
+                    'В сохранённом результате TOC не найдены номера страниц; обновите оглавление в Word.'))
+
+        # Автоматическое поле не отменяет требования к видимому заголовку оглавления.
+        for item in self._legacy_check(doc):
+            if item.location.startswith('Заголовок оглавления') or (
+                    item.location == 'Документ' and 'Содержание' in item.message):
+                violations.append(item)
+        return violations
+
+    def _legacy_check(self, doc: Document) -> List[Violation]:
         violations: List[Violation] = []
         rule_name = "TableOfContentsRule"
 
