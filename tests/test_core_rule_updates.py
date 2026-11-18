@@ -129,10 +129,10 @@ class BreaksAndPaginationRuleTests(unittest.TestCase):
         doc.add_paragraph('Текст').add_run().add_break()
         doc.add_paragraph('')
         doc.add_paragraph('')
-        heading = doc.add_paragraph('ВВЕДЕНИЕ')
-        heading.paragraph_format.keep_with_next = False
         body = doc.add_paragraph('Основной текст')
         body.paragraph_format.widow_control = False
+        heading = doc.add_paragraph('ВВЕДЕНИЕ')
+        heading.paragraph_format.keep_with_next = False
         page = doc.add_paragraph('Следующая страница')
         page.add_run().add_break(WD_BREAK.PAGE)
         found = BreaksAndPaginationRule().check(doc)
@@ -141,6 +141,27 @@ class BreaksAndPaginationRuleTests(unittest.TestCase):
         joined = ' '.join(v.message for v in found)
         for token in ['soft break', 'пустых абзаца', 'keep_with_next', 'widow_control', 'разрыв страницы']:
             self.assertIn(token, joined)
+
+    def test_two_enters_before_paragraph_heading_are_not_reported(self):
+        # МДК (слайд 204): перед началом очередного параграфа ставится 2 Enter'а
+        doc = Document()
+        doc.add_paragraph('1. Общие сведения')
+        doc.add_paragraph('')
+        doc.add_paragraph('')
+        doc.add_paragraph('1.1. Наименование системы')
+        doc.add_paragraph('Текст раздела.')
+        found = BreaksAndPaginationRule().check(doc)
+        self.assertEqual([], [v for v in found if 'пустых абзаца' in v.message])
+
+    def test_three_enters_before_paragraph_heading_are_still_reported(self):
+        doc = Document()
+        doc.add_paragraph('Раздел')
+        doc.add_paragraph('')
+        doc.add_paragraph('')
+        doc.add_paragraph('')
+        doc.add_paragraph('1.1. Заголовок')
+        found = BreaksAndPaginationRule().check(doc)
+        self.assertTrue(any('пустых абзаца' in v.message for v in found))
 
     def test_single_empty_paragraph_and_defaults_are_not_reported(self):
         doc = Document()
