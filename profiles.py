@@ -24,7 +24,7 @@ from docx_rules import (
     TitlePageRule,
     WhiteFillRule,
 )
-from gost_rules import (
+from gost import (
     AnnotationRule,
     Gost19201PageNumberingRule,
     Gost19201StructureRule,

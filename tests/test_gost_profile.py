@@ -9,7 +9,7 @@ from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 
 from docx_rules import Severity, WhiteFillRule
-from gost_rules import (
+from gost import (
     AnnotationRule,
     Gost19201PageNumberingRule,
     Gost19201StructureRule,
