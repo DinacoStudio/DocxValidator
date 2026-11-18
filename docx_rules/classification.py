@@ -12,8 +12,11 @@ from docx_rules.helpers import is_heading, is_toc_line, is_word_heading, style_c
 def classify_paragraphs(doc: Document) -> List:
     """Эвристическая разметка: отсутствие оглавления не скрывает весь текст."""
     classified = list(doc.paragraphs)
+    # Титульный лист заканчивается на первом «словесном» заголовке (Содержание,
+    # Введение, Глава...). Числовой шаблон is_heading сюда не подходит — иначе
+    # код специальности «09.02.07. …» на титуле обрывает титульный лист.
     first = next((i for i, p in enumerate(classified)
-                  if is_heading(p.text.strip()) and not is_toc_line(p.text)), 0)
+                  if is_word_heading(p.text.strip()) and not is_toc_line(p.text)), 0)
     in_toc = in_appendix = False
     for i, p in enumerate(classified):
         text = p.text.strip()
