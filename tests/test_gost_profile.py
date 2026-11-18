@@ -152,8 +152,14 @@ class NumberingAndProfilesTests(unittest.TestCase):
                             for rule in standard))
         self.assertFalse(any(isinstance(rule, AnnotationRule) for rule in standard))
         self.assertTrue(any(isinstance(rule, AnnotationRule) for rule in gost))
-        self.assertEqual([type(rule) for rule in standard],
-                         [type(rule) for rule in gost[:len(standard)]])
+        # ГОСТ-профиль = стандарт без курсовых правил + профильные правила ТЗ
+        coursework_only = {"IntroductionContentRule", "ReferencesListRule",
+                           "SourceReferencesRule", "ParagraphConclusionRule"}
+        expected = [type(r) for r in standard
+                    if type(r).__name__ not in coursework_only]
+        gost_types = [type(r) for r in gost]
+        self.assertEqual(expected, gost_types[:len(expected)])
+        self.assertFalse(any(type(r).__name__ in coursework_only for r in gost))
         self.assertIsNot(get_rules("standard")[0], get_rules("standard")[0])
 
     def test_unknown_profile(self):
