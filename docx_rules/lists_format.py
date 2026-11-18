@@ -8,7 +8,7 @@ from docx.oxml.ns import qn
 from typing import List
 
 from docx_rules.base import BaseRule, Severity, Violation
-from docx_rules.helpers import effective
+from docx_rules.helpers import effective, style_chain, full_text, has_field
 from docx_rules.classification import classify_paragraphs
 
 
@@ -18,8 +18,8 @@ class ListsFormatRule(BaseRule):
     DOT_ITEM_REGEX = re.compile(r'^(\d+)\.\s+(.+)$')
 
     INDENT_TOLERANCE_CM = 0.15
-    # Допустимые маркеры авто-списков (только тире)
-    NUMBERING_DASHES = ('–', '-', '—')
+    # Для маркированного списка допустимо только среднее тире (U+2013).
+    NUMBERING_DASHES = ('–',)
 
     @staticmethod
     def _item_kind(text: str):
@@ -46,15 +46,34 @@ class ListsFormatRule(BaseRule):
 
     @staticmethod
     def _num_pr(paragraph):
-        """(numId, ilvl) прямого w:numPr абзаца или None."""
-        num_pr = paragraph._p.xpath('./w:pPr/w:numPr')
-        if not num_pr:
+        """(numId, ilvl) с учётом прямых свойств и всей цепочки стилей."""
+        candidates = paragraph._p.xpath('./w:pPr/w:numPr')
+        for style in style_chain(paragraph.style):
+            p_pr = style.element.find(qn('w:pPr'))
+            if p_pr is not None:
+                num_pr = p_pr.find(qn('w:numPr'))
+                if num_pr is not None:
+                    candidates.append(num_pr)
+
+        num_id = None
+        ilvl = None
+        for num_pr in candidates:
+            if num_id is None:
+                node = num_pr.find(qn('w:numId'))
+                if node is not None:
+                    num_id = node.get(qn('w:val'))
+            if ilvl is None:
+                node = num_pr.find(qn('w:ilvl'))
+                if node is not None:
+                    ilvl = node.get(qn('w:val'))
+            if num_id is not None and ilvl is not None:
+                break
+        if num_id is None or num_id == '0':
             return None
-        num_id = num_pr[0].xpath('./w:numId/@w:val')
-        if not num_id:
+        try:
+            return int(num_id), int(ilvl) if ilvl is not None else 0
+        except (TypeError, ValueError):
             return None
-        ilvl = num_pr[0].xpath('./w:ilvl/@w:val')
-        return int(num_id[0]), int(ilvl[0]) if ilvl else 0
 
     @staticmethod
     def _numbering_level(doc, num_id: int, ilvl: int):
@@ -298,10 +317,26 @@ class ListsFormatRule(BaseRule):
             next_item_idx = idx + 1
             while next_item_idx < len(paragraphs) and not paragraphs[next_item_idx].text.strip():
                 next_item_idx += 1
-            is_last = not (next_item_idx in auto_map and auto_map[next_item_idx][0] == num_id
-                           and auto_map[next_item_idx][1] == ilvl)
+            has_next_same = (next_item_idx in auto_map and auto_map[next_item_idx][0] == num_id
+                             and auto_map[next_item_idx][1] == ilvl)
+            is_last = not has_next_same
 
             self._check_auto_item(doc, paragraphs, idx, num_id, ilvl, is_last, violations)
+
+            prev_item_idx = idx - 1
+            while prev_item_idx >= 0 and not paragraphs[prev_item_idx].text.strip():
+                prev_item_idx -= 1
+            has_prev_same = (prev_item_idx in auto_map and auto_map[prev_item_idx][0] == num_id
+                             and auto_map[prev_item_idx][1] == ilvl)
+            if (not has_prev_same and has_next_same and prev_item_idx >= 0
+                    and prev_item_idx not in auto_map
+                    and not self._item_kind(paragraphs[prev_item_idx].text.strip())):
+                prev_text = paragraphs[prev_item_idx].text.strip()
+                if not prev_text.endswith(':'):
+                    violations.append(Violation(
+                        rule_name, Severity.WARNING,
+                        f"Абзац {idx + 1} ('{paragraph.text.strip()[:30]}...')",
+                        "В абзаце перед автоматическим списком ставится двоеточие."))
 
         for idx in sorted(item_indices):
             paragraph = paragraphs[idx]

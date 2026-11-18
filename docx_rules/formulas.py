@@ -14,6 +14,10 @@ from docx_rules.classification import classify_paragraphs
 class FormulasRule(BaseRule):
     NUMBERING_REGEX = re.compile(r'\((\d+)\)\s*$')
     M_JC_REGEX = re.compile(r'<m:jc\s+m:val="([^"]+)"')
+    FORMULA_CONTEXT_REGEX = re.compile(
+        r'\b(?:по|согласно|используя|применяя|следующей|расч[её]тной)\s+(?:математической\s+)?формул[еы]\b|'
+        r'\b(?:формул[аы]|уравнени[ея])\s*(?:имеет\s+вид|представлен[ао]?|записывается)\b',
+        re.IGNORECASE)
 
     def _is_display_formula(self, paragraph) -> bool:
         """Выносная формула: oMathPara либо короткий абзац с oMath."""
@@ -111,6 +115,29 @@ class FormulasRule(BaseRule):
                             message="После формулы должны быть описаны примененные обозначения (например: 'где: ...')."
                         )
                     )
+
+        # Изображение между сильным вводным контекстом формулы и расшифровкой обозначений
+        # может быть растровой формулой. Это лишь WARN: рисунок по XML надёжно отличить нельзя.
+        for idx, paragraph in enumerate(paragraphs):
+            if idx in formula_indices or not paragraph._p.xpath('.//w:drawing | .//w:pict'):
+                continue
+            prev_idx = idx - 1
+            while prev_idx >= 0 and not full_text(paragraphs[prev_idx]).strip():
+                prev_idx -= 1
+            next_idx = idx + 1
+            while next_idx < len(paragraphs) and not full_text(paragraphs[next_idx]).strip():
+                next_idx += 1
+            own_text = full_text(paragraph).strip()
+            prev_text = full_text(paragraphs[prev_idx]).strip() if prev_idx >= 0 else ''
+            next_text = full_text(paragraphs[next_idx]).strip() if next_idx < len(paragraphs) else ''
+            intro = own_text if self.FORMULA_CONTEXT_REGEX.search(own_text) else prev_text
+            if (self.FORMULA_CONTEXT_REGEX.search(intro) and intro.rstrip().endswith(':')
+                    and re.match(r'^где\b', next_text, re.IGNORECASE)):
+                violations.append(Violation(
+                    rule_name, Severity.WARNING,
+                    f"Рисунок рядом с формулой (абзац {idx + 1})",
+                    "Рисунок находится между вводной фразой о формуле и расшифровкой «где». "
+                    "Возможно, формула вставлена как изображение; используйте редактор формул Word."))
 
         expected = list(range(1, len(formula_numbers) + 1))
         if formula_numbers and sorted(formula_numbers) != expected:

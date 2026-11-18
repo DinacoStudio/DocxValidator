@@ -7,8 +7,9 @@
 
 - поля страницы (Л: 3 см, П: 1,5 см, В/Н: 2 см);
 - основной текст: по ширине, красная строка 1,25 см, интервал 1,5,
-  Times New Roman 14, чёрный цвет, интервалы до/после 0, запрет висячих строк;
-- заголовки глав/параграфов: полужирные, по центру, без красной строки;
+  Times New Roman 14, интервалы до/после 0, запрет висячих строк;
+  явно заданный цвет текста сохраняется;
+- заголовки глав/параграфов: полужирные, по центру, отступ 1,25 см;
   крупные разделы начинаются с новой страницы, параграфы — нет;
 - убирается белая заливка фона (w:shd fill="FFFFFF") и белое выделение;
 - длинное тире (—) заменяется на тире средней длины (–).
@@ -20,11 +21,13 @@ from typing import Dict
 import re
 
 from docx import Document
-from docx.shared import Cm, Pt, RGBColor
+from docx.shared import Cm, Pt
 from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 
 from docx_rules import classify_paragraphs, is_toc_line, SectionFormatRule, ListsFormatRule
+from metadata_utils import clear_python_docx_metadata
 
 # Требуемые значения — те же, что проверяют PageMarginsRule и MainTextFormatRule
 MARGINS = {"left": 3.0, "right": 1.5, "top": 2.0, "bottom": 2.0}
@@ -32,6 +35,7 @@ FONT_NAME = "Times New Roman"
 FONT_SIZE = 14.0
 LINE_SPACING = 1.5
 FIRST_LINE_INDENT_CM = 1.25
+PREFERRED_LINE_PITCH = 360  # 18 пт в twentieths of a point
 
 MAJOR_HEADER_REGEX = re.compile(SectionFormatRule.MAJOR_HEADER_REGEX, re.IGNORECASE)
 APPENDIX_HEADER_REGEX = re.compile(r'^ПРИЛОЖЕНИЕ', re.IGNORECASE)
@@ -47,8 +51,6 @@ _SECTION_RULE = SectionFormatRule()
 
 def _is_white_shd(shd) -> bool:
     if shd is None:
-        return False
-    if (shd.get(qn('w:val')) or '').lower() == 'nil':
         return False
     fill = (shd.get(qn('w:fill')) or '').strip().lstrip('#').lower()
     return fill in WHITE_FILLS
@@ -128,9 +130,6 @@ def _fix_body_paragraph(paragraph) -> None:
         rFonts.set(qn('w:ascii'), FONT_NAME)
         rFonts.set(qn('w:hAnsi'), FONT_NAME)
         rFonts.set(qn('w:cs'), FONT_NAME)
-        color = run.font.color
-        if color and color.rgb is not None and color.rgb != RGBColor(0, 0, 0):
-            run.font.color.rgb = RGBColor(0, 0, 0)
 
 
 def _is_major_header(paragraph) -> bool:
@@ -144,7 +143,7 @@ def _is_subheading(paragraph) -> bool:
 
 def _fix_major_header(paragraph, paragraphs, idx: int) -> None:
     paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    paragraph.paragraph_format.first_line_indent = Cm(0)
+    paragraph.paragraph_format.first_line_indent = Cm(FIRST_LINE_INDENT_CM)
     paragraph.paragraph_format.line_spacing = LINE_SPACING
     for run in paragraph.runs:
         run.font.bold = True
@@ -155,13 +154,43 @@ def _fix_major_header(paragraph, paragraphs, idx: int) -> None:
 
 def _fix_subheading(paragraph) -> None:
     paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    paragraph.paragraph_format.first_line_indent = Cm(0)
+    paragraph.paragraph_format.first_line_indent = Cm(FIRST_LINE_INDENT_CM)
     paragraph.paragraph_format.line_spacing = LINE_SPACING
     for run in paragraph.runs:
         run.font.bold = True
     # Параграф не должен принудительно начинаться с новой страницы
     if paragraph.paragraph_format.page_break_before:
         paragraph.paragraph_format.page_break_before = False
+
+
+def _whole_grid_pitch(section, preferred: int = PREFERRED_LINE_PITCH) -> int:
+    """Подбирает ближайший linePitch, дающий целое число строк на странице."""
+    usable_twips = (
+        section.page_height.twips
+        - section.top_margin.twips
+        - section.bottom_margin.twips
+    )
+    if usable_twips <= 0:
+        return preferred
+    divisors = []
+    candidate = 1
+    while candidate * candidate <= usable_twips:
+        if usable_twips % candidate == 0:
+            divisors.append(candidate)
+            paired = usable_twips // candidate
+            if paired != candidate:
+                divisors.append(paired)
+        candidate += 1
+    return min(divisors, key=lambda value: (abs(value - preferred), value))
+
+
+def _set_text_grid(section) -> None:
+    for old_grid in section._sectPr.findall(qn('w:docGrid')):
+        section._sectPr.remove(old_grid)
+    grid = OxmlElement('w:docGrid')
+    grid.set(qn('w:type'), 'lines')
+    grid.set(qn('w:linePitch'), str(_whole_grid_pitch(section)))
+    section._sectPr.append(grid)
 
 
 def create_fixed_docx(src_path: str, dst_path: str) -> Dict[str, int]:
@@ -172,6 +201,7 @@ def create_fixed_docx(src_path: str, dst_path: str) -> Dict[str, int]:
     doc = Document(src_path)
     stats: Dict[str, int] = {
         "поля страницы": 0,
+        "сетка строк": 0,
         "основной текст": 0,
         "заголовки": 0,
         "убрана белая заливка": 0,
@@ -185,6 +215,8 @@ def create_fixed_docx(src_path: str, dst_path: str) -> Dict[str, int]:
         section.left_margin = Cm(MARGINS["left"])
         section.right_margin = Cm(MARGINS["right"])
         stats["поля страницы"] += 1
+        _set_text_grid(section)
+        stats["сетка строк"] += 1
 
     paragraphs = classify_paragraphs(doc)
 
@@ -247,4 +279,5 @@ def create_fixed_docx(src_path: str, dst_path: str) -> Dict[str, int]:
         stats["убрана белая заливка"] += _remove_white_shading(table._tbl)
 
     doc.save(dst_path)
+    clear_python_docx_metadata(dst_path)
     return stats

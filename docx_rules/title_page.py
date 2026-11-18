@@ -7,6 +7,7 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH
 from typing import List, Optional
 
 from docx_rules.base import BaseRule, Severity, Violation
+from docx_rules.helpers import effective, full_text
 
 
 class TitlePageRule(BaseRule):
@@ -51,6 +52,8 @@ class TitlePageRule(BaseRule):
         topic_idx: Optional[int] = None
         topic_paragraph = None
         has_institution_header = False
+        has_required_ministry = False
+        has_obsolete_ministry = False
         has_work_type = False
         has_year = False
 
@@ -65,6 +68,15 @@ class TitlePageRule(BaseRule):
             if align is None and p.style and p.style.paragraph_format:
                 align = p.style.paragraph_format.alignment
 
+            if re.search(r'МИНИСТЕРСТВО\s+ПРОСВЕЩЕНИЯ\s+(?:РОССИЙСКОЙ\s+ФЕДЕРАЦИИ|РФ)\b', text_upper):
+                has_required_ministry = True
+            if re.search(r'МИНИСТЕРСТВО\s+ОБРАЗОВАНИЯ\s+И\s+НАУКИ', text_upper):
+                has_obsolete_ministry = True
+                violations.append(Violation(
+                    rule_name, Severity.ERROR,
+                    f"Титульный лист, абзац {idx+1} ('{text[:30]}...')",
+                    "Указано устаревшее наименование «Министерство образования и науки». Требуется «Министерство просвещения Российской Федерации»."))
+
             if any(word in text_upper for word in ["МИНИСТЕРСТВО", "ОБРАЗОВАТЕЛЬНОЕ", "КОЛЛЕДЖ", "УНИВЕРСИТЕТ", "ИНСТИТУТ"]):
                 has_institution_header = True
                 if align != WD_ALIGN_PARAGRAPH.CENTER:
@@ -77,13 +89,15 @@ class TitlePageRule(BaseRule):
                         )
                     )
 
-            if "ВЫПУСКНАЯ КВАЛИФИКАЦИОННАЯ РАБОТА" in text_upper or "ДИПЛОМНЫЙ ПРОЕКТ" in text_upper:
-                has_work_type = True
+            is_work_type_line = bool(re.search(
+                r'(?:ВЫПУСКНАЯ\s+КВАЛИФИКАЦИОННАЯ\s+РАБОТА|ДИПЛОМН(?:АЯ\s+РАБОТА|ЫЙ\s+ПРОЕКТ)|'
+                r'КУРСОВ(?:АЯ\s+РАБОТА|ОЙ\s+ПРОЕКТ)|ТЕХНИЧЕСКОЕ\s+ЗАДАНИЕ|\bТЗ\b)', text_upper))
+            has_work_type = has_work_type or is_work_type_line
 
             is_bold = any(run.bold for run in p.runs if run.text.strip())
             is_topic_candidate = (
                 ("РАЗРАБОТКА" in text_upper or "ТЕМА" in text_upper or "ПРОЕКТИРОВАНИЕ" in text_upper or is_bold)
-                and not has_work_type
+                and not is_work_type_line
                 and idx > 2
             )
 
@@ -125,7 +139,7 @@ class TitlePageRule(BaseRule):
                         rule_name=rule_name,
                         severity=Severity.ERROR,
                         location=f"Титульный лист, абзац {topic_idx+1} ('{topic_paragraph.text[:30]}...')",
-                        message="Тема дипломного проекта должна быть выровнена по центру."
+                        message="Тема работы должна быть выровнена по центру."
                     )
                 )
 
@@ -136,7 +150,7 @@ class TitlePageRule(BaseRule):
                         rule_name=rule_name,
                         severity=Severity.WARNING,
                         location=f"Титульный лист, абзац {topic_idx+1}",
-                        message="Тема дипломного проекта должна быть выделена полужирным шрифтом."
+                        message="Тема работы должна быть выделена полужирным шрифтом."
                     )
                 )
 
@@ -147,7 +161,7 @@ class TitlePageRule(BaseRule):
                         rule_name=rule_name,
                         severity=Severity.WARNING,
                         location=f"Титульный лист, абзац {topic_idx+1}",
-                        message=f"Тема дипломного проекта расположена слишком {'высоко' if relative_position < 0.20 else 'низко'}. Она должна быть примерно в центре титульного листа."
+                        message=f"Тема работы расположена слишком {'высоко' if relative_position < 0.20 else 'низко'}. Она должна быть примерно в центре титульного листа."
                     )
                 )
         else:
@@ -156,9 +170,19 @@ class TitlePageRule(BaseRule):
                     rule_name=rule_name,
                     severity=Severity.ERROR,
                     location="Титульный лист",
-                    message="Тема дипломного проекта не найдена на титульном листе."
+                    message="Тема работы не найдена на титульном листе."
                 )
             )
+
+        if not has_required_ministry:
+            violations.append(Violation(
+                rule_name, Severity.ERROR, 'Титульный лист',
+                'Не найдено обязательное наименование «Министерство просвещения Российской Федерации».'))
+
+        if not has_work_type:
+            violations.append(Violation(
+                rule_name, Severity.ERROR, 'Титульный лист',
+                'Не указан вид работы (дипломная/выпускная, курсовая работа или техническое задание).'))
 
         if not has_institution_header:
             violations.append(

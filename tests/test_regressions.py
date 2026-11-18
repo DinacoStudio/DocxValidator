@@ -15,7 +15,7 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_TAB_ALIGNMENT
 from docx.enum.table import WD_ALIGN_VERTICAL
 from docx.oxml import OxmlElement, parse_xml
 from docx.oxml.ns import qn
-from docx.shared import Cm, Pt
+from docx.shared import Cm, Pt, Twips
 
 from docx_rules import (TextGridRule, MainTextFormatRule, PageNumberingRule,
                         TableOfContentsRule, SectionFormatRule, AppendixFormatRule,
@@ -32,6 +32,10 @@ def grid(section, kind=None, pitch=None, space=None):
         if value is not None:
             node.set(qn('w:' + attr), value)
     section._sectPr.append(node)
+    if pitch is not None and str(pitch).isdigit() and int(pitch) > 0:
+        section.top_margin = section.bottom_margin = Cm(2)
+        section.page_height = Twips(
+            round(section.top_margin.twips + section.bottom_margin.twips) + int(pitch) * 32)
     return node
 
 
@@ -78,13 +82,22 @@ class GridTests(unittest.TestCase):
         doc.sections[0]._sectPr.remove(doc.sections[0]._sectPr.find(qn('w:docGrid')))
         self.assertTrue(TextGridRule().check(doc))
 
-    def test_active_modes_signed_charspace(self):
-        for kind in ['lines', 'linesAndChars', 'snapToChars']:
+    def test_active_line_modes_signed_charspace(self):
+        for kind in ['lines', 'linesAndChars']:
             for space in [None, '0', '-123', '+24']:
                 with self.subTest(kind=kind, space=space):
                     doc = Document()
-                    grid(doc.sections[0], kind, '360' if kind != 'snapToChars' else None, space)
+                    grid(doc.sections[0], kind, '360', space)
                     self.assertEqual([], TextGridRule().check(doc))
+
+    def test_snap_to_chars_without_line_pitch_is_error(self):
+        for space in [None, '0', '-123', '+24']:
+            with self.subTest(space=space):
+                doc = Document()
+                grid(doc.sections[0], 'snapToChars', space=space)
+                errors = TextGridRule().check(doc)
+                self.assertTrue(any('type lines или linesAndChars' in v.message for v in errors))
+                self.assertTrue(any('linePitch' in v.message for v in errors))
 
     def test_invalid_numbers(self):
         for pitch in [None, '0', '-1', '1.5', 'abc']:
@@ -116,7 +129,8 @@ class GridTests(unittest.TestCase):
             path = Path(directory) / 'grid.docx'
             doc.save(path)
             errors = TextGridRule().check(Document(path))
-            self.assertEqual(['Секция 2'], [v.location for v in errors])
+            self.assertTrue(errors)
+            self.assertEqual({'Секция 2'}, {v.location for v in errors})
 
 
 class FormattingTests(unittest.TestCase):
@@ -244,11 +258,12 @@ class IntegrationTests(unittest.TestCase):
             importlib.reload(main)
         self.assertEqual('', output.getvalue())
         rules = main.default_rules()
-        # TextGridRule не входит в требования МДК 04.01 и в стандартный набор
-        self.assertEqual(0, sum(isinstance(r, TextGridRule) for r in rules))
+        # Точная сетка строк обязательна: проверяется согласованность linePitch
+        # с рабочей высотой страницы при полях 2 см
+        self.assertEqual(1, sum(isinstance(r, TextGridRule) for r in rules))
         self.assertEqual(1, sum(isinstance(r, TableOfContentsRule) for r in rules))
 
-    def test_toc_stops_at_chapter_and_spacing(self):
+    def test_manual_toc_is_rejected_but_legacy_spacing_helper_remains_tested(self):
         doc = Document()
         p = doc.add_paragraph('СОДЕРЖАНИЕ')
         p.alignment = WD_ALIGN_PARAGRAPH.CENTER
@@ -258,10 +273,12 @@ class IntegrationTests(unittest.TestCase):
         entry.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
         entry.paragraph_format.tab_stops.add_tab_stop(Cm(16.5), WD_TAB_ALIGNMENT.RIGHT)
         doc.add_paragraph('ГЛАВА 1 ТЕОРИЯ')
-        self.assertEqual([], TableOfContentsRule().check(doc))
+        rule = TableOfContentsRule()
+        self.assertTrue(any('ручное оглавление' in v.message for v in rule.check(doc)))
+        self.assertEqual([], rule._legacy_check(doc))
         for text in ['1.1  Название\t3', '1.1Название\t3', '1.1\tНазвание\t3']:
             entry.text = text
-            self.assertTrue(any('строго один пробел' in v.message for v in TableOfContentsRule().check(doc)))
+            self.assertTrue(any('строго один пробел' in v.message for v in rule._legacy_check(doc)))
 
     def test_sample_smoke_no_modification(self):
         from main import DocxValidator, default_rules
@@ -368,14 +385,17 @@ class TableOfContentsTabsTests(unittest.TestCase):
         doc.add_paragraph('1.1 Параграф тела')
         return doc
 
-    def test_positive_manual_toc(self):
-        self.assertEqual([], TableOfContentsRule().check(self.build()))
+    def test_well_formed_manual_toc_is_still_rejected(self):
+        found = TableOfContentsRule().check(self.build())
+        self.assertTrue(any(v.severity == Severity.ERROR and 'ручное оглавление' in v.message
+                            for v in found))
 
-    def test_entry_without_tab(self):
+    def test_entry_without_tab_in_legacy_helper(self):
         doc = self.build(tab_cm=None)
-        self.assertTrue(any('табулятор' in m for m in messages(TableOfContentsRule().check(doc))))
+        self.assertTrue(any('табулятор' in m
+                            for m in messages(TableOfContentsRule()._legacy_check(doc))))
 
-    def test_different_tab_positions(self):
+    def test_different_tab_positions_in_legacy_helper(self):
         doc = Document()
         header = doc.add_paragraph('СОДЕРЖАНИЕ')
         header.alignment = WD_ALIGN_PARAGRAPH.CENTER
@@ -386,7 +406,8 @@ class TableOfContentsTabsTests(unittest.TestCase):
             right_tab(entry, pos)
         doc.add_paragraph('ГЛАВА 1 ТЕОРИЯ')
         doc.add_paragraph('1.1 Параграф тела')
-        self.assertTrue(any('одной позиции' in m for m in messages(TableOfContentsRule().check(doc))))
+        found = messages(TableOfContentsRule()._legacy_check(doc))
+        self.assertTrue(any('одной позиции' in m for m in found))
 
     def test_toc_field_skips_manual_checks(self):
         doc = Document()
@@ -407,11 +428,11 @@ class TableOfContentsTabsTests(unittest.TestCase):
         doc.add_paragraph('1.1 Параграф тела')
         self.assertEqual([], TableOfContentsRule().check(doc))
 
-    def test_heading_missing_from_toc(self):
+    def test_heading_missing_from_manual_toc_in_legacy_helper(self):
         doc = self.build()
         doc.add_paragraph('ГЛАВА 2 ПРАКТИКА')
         doc.add_paragraph('2.1 Отдельный параграф')
-        found = messages(TableOfContentsRule().check(doc))
+        found = messages(TableOfContentsRule()._legacy_check(doc))
         self.assertTrue(any("Глава 2' нет в содержании" in m for m in found))
         self.assertTrue(any('2.1 нет в содержании' in m for m in found))
 

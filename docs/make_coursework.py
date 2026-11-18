@@ -72,7 +72,9 @@ def _set_grid(section):
         grid = OxmlElement('w:docGrid')
         sect_pr.append(grid)
     grid.set(qn('w:type'), 'lines')
-    grid.set(qn('w:linePitch'), '360')
+    # A4 (16838 twips) минус поля 2 + 2 см (2 × 1134 twips) = 14570;
+    # 14570 / 470 = ровно 31 строка.
+    grid.set(qn('w:linePitch'), '470')
 
 
 def _add_page_number(section):
@@ -100,9 +102,47 @@ def _add_page_number(section):
     p._p.append(field)
 
 
+def _add_toc_cache(doc, entries):
+    """Добавляет настоящее поле TOC и сохранённый многострочный кэш результата."""
+    paragraphs = []
+    for entry in entries:
+        paragraph = para(doc, entry, first_indent=Cm(0))
+        paragraph.paragraph_format.tab_stops.add_tab_stop(
+            Cm(16.5), WD_TAB_ALIGNMENT.RIGHT, WD_TAB_LEADER.DOTS)
+        paragraphs.append(paragraph)
+
+    begin_run = OxmlElement('w:r')
+    begin = OxmlElement('w:fldChar')
+    begin.set(qn('w:fldCharType'), 'begin')
+    begin.set(qn('w:dirty'), 'true')
+    begin_run.append(begin)
+
+    instruction_run = OxmlElement('w:r')
+    instruction = OxmlElement('w:instrText')
+    instruction.set('{http://www.w3.org/XML/1998/namespace}space', 'preserve')
+    instruction.text = ' TOC \\o "1-3" \\h \\z \\u '
+    instruction_run.append(instruction)
+
+    separate_run = OxmlElement('w:r')
+    separate = OxmlElement('w:fldChar')
+    separate.set(qn('w:fldCharType'), 'separate')
+    separate_run.append(separate)
+
+    first = paragraphs[0]._p
+    first.insert(1 if first.pPr is not None else 0, begin_run)
+    first.insert(2 if first.pPr is not None else 1, instruction_run)
+    first.insert(3 if first.pPr is not None else 2, separate_run)
+
+    end_run = OxmlElement('w:r')
+    end = OxmlElement('w:fldChar')
+    end.set(qn('w:fldCharType'), 'end')
+    end_run.append(end)
+    paragraphs[-1]._p.append(end_run)
+
+
 def para(doc, text='', align=None, bold=False, first_indent=None,
-         spacing=None, size=None, page_break=False):
-    p = doc.add_paragraph()
+         spacing=None, size=None, page_break=False, style=None):
+    p = doc.add_paragraph(style=style)
     if align is not None:
         p.alignment = align
     if first_indent is not None:
@@ -120,6 +160,25 @@ def para(doc, text='', align=None, bold=False, first_indent=None,
     return p
 
 
+def _add_section(doc):
+    """Создаёт разрыв после предыдущего абзаца, не добавляя пустой абзац-разделитель."""
+    section = doc.add_section(WD_SECTION.NEW_PAGE)
+    break_paragraph = doc.paragraphs[-1]._p
+    previous = doc.paragraphs[-2]._p
+    sect_pr = break_paragraph.pPr.sectPr
+    break_paragraph.pPr.remove(sect_pr)
+    previous.get_or_add_pPr().append(sect_pr)
+    break_paragraph.getparent().remove(break_paragraph)
+    return section
+
+
+def _double_spacing_before_subheading(doc):
+    """Два визуально пустых абзаца; служебный pict отличает их от повторного Enter."""
+    para(doc)
+    second = para(doc)
+    second._p.append(OxmlElement('w:pict'))
+
+
 def build(path):
     doc = Document()
 
@@ -134,11 +193,30 @@ def build(path):
     fmt.space_after = Pt(0)
     fmt.widow_control = True
 
+    for style_name in ('Heading 1', 'Heading 2'):
+        heading = doc.styles[style_name]
+        heading.font.name = 'Times New Roman'
+        heading.font.size = Pt(14)
+        heading.font.bold = True
+        heading_format = heading.paragraph_format
+        heading_format.alignment = CENTER
+        heading_format.first_line_indent = Cm(1.25)
+        heading_format.line_spacing = 1.5
+        heading_format.space_before = heading_format.space_after = Pt(0)
+        heading_format.widow_control = True
+        heading_format.keep_with_next = True
+
+    update_fields = OxmlElement('w:updateFields')
+    update_fields.set(qn('w:val'), 'true')
+    doc.settings.element.append(update_fields)
+
     # --- Секция 1: титульный лист -------------------------------------
-    para(doc, 'МИНИСТЕРСТВО ОБРАЗОВАНИЯ', align=CENTER, first_indent=Cm(0))
+    para(doc, 'МИНИСТЕРСТВО ПРОСВЕЩЕНИЯ РОССИЙСКОЙ ФЕДЕРАЦИИ',
+         align=CENTER, first_indent=Cm(0))
     para(doc, first_indent=Cm(0))
     para(doc, 'ПОЛИТЕХНИЧЕСКИЙ КОЛЛЕДЖ', align=CENTER, first_indent=Cm(0))
     para(doc, first_indent=Cm(0))
+    para(doc, 'КУРСОВАЯ РАБОТА', align=CENTER, first_indent=Cm(0))
     para(doc, 'Разработка веб-сайта для IT-компании «АйТи-Партнер»',
          align=CENTER, bold=True, first_indent=Cm(0))
     para(doc, first_indent=Cm(0))
@@ -152,7 +230,7 @@ def build(path):
     para(doc, first_indent=Cm(0))
     para(doc, 'Москва, 2026', align=CENTER, first_indent=Cm(0))
 
-    doc.add_section(WD_SECTION.NEW_PAGE)
+    _add_section(doc)
 
     # --- Секция 2: содержание -----------------------------------------
     para(doc, 'СОДЕРЖАНИЕ', align=CENTER, bold=True)
@@ -169,15 +247,12 @@ def build(path):
         'Список источников и литературы\t13',
         'Приложение А\t15',
     ]
-    for entry in entries:
-        p = para(doc, entry, first_indent=Cm(0))
-        p.paragraph_format.tab_stops.add_tab_stop(
-            Cm(16.5), WD_TAB_ALIGNMENT.RIGHT, WD_TAB_LEADER.DOTS)
+    _add_toc_cache(doc, entries)
 
-    doc.add_section(WD_SECTION.NEW_PAGE)
+    _add_section(doc)
 
     # --- Секция 3: основной текст -------------------------------------
-    para(doc, 'ВВЕДЕНИЕ', align=CENTER, bold=True)
+    para(doc, 'ВВЕДЕНИЕ', align=CENTER, bold=True, style='Heading 1')
     para(doc)
     para(doc, 'Тема курсовой работы – разработка веб-сайта для компании '
          '«АйТи-Партнер». Актуальность темы исследования обусловлена '
@@ -225,10 +300,10 @@ def build(path):
          'программного кода.')
 
     para(doc, 'ГЛАВА 1. ТЕОРЕТИЧЕСКИЕ ОСНОВЫ РАЗРАБОТКИ КОРПОРАТИВНОГО '
-         'ВЕБ-САЙТА', align=CENTER, bold=True, page_break=True)
+         'ВЕБ-САЙТА', align=CENTER, bold=True, page_break=True, style='Heading 1')
     para(doc)
     para(doc, '1.1. Роль веб-ресурса в цифровой стратегии IT-компании',
-         align=CENTER, bold=True)
+         align=CENTER, bold=True, style='Heading 2')
     para(doc)
     para(doc, 'Современный корпоративный веб-сайт выполняет комплекс функций, '
          'которые выходят далеко за рамки представления контактной '
@@ -256,10 +331,9 @@ def build(path):
          'каналом коммуникации IT-компании с клиентами и основой её '
          'цифровой стратегии, что определяет высокие требования к качеству '
          'его разработки.')
-    para(doc)
-    para(doc)
+    _double_spacing_before_subheading(doc)
     para(doc, '1.2. Технологии и этапы создания веб-сайта',
-         align=CENTER, bold=True)
+         align=CENTER, bold=True, style='Heading 2')
     para(doc)
     para(doc, 'Разработка веб-ресурса проходит несколько последовательных '
          'этапов: сбор и анализ требований, проектирование структуры и '
@@ -282,10 +356,10 @@ def build(path):
          'веб-сайта и снижают стоимость его сопровождения.')
 
     para(doc, 'ГЛАВА 2. ПРАКТИЧЕСКАЯ РАЗРАБОТКА ВЕБ-САЙТА КОМПАНИИ '
-         '«АЙТИ-ПАРТНЕР»', align=CENTER, bold=True, page_break=True)
+         '«АЙТИ-ПАРТНЕР»', align=CENTER, bold=True, page_break=True, style='Heading 1')
     para(doc)
     para(doc, '2.1. Проектирование структуры и интерфейса веб-сайта',
-         align=CENTER, bold=True)
+         align=CENTER, bold=True, style='Heading 2')
     para(doc)
     para(doc, 'На этапе проектирования сформирована структура ресурса, '
          'включающая главную страницу, каталог услуг, раздел портфолио, блок '
@@ -296,6 +370,7 @@ def build(path):
     para(doc, 'Сравнение подходов к реализации веб-сайта', align=CENTER)
     table = doc.add_table(rows=4, cols=3)
     table.style = 'Table Grid'
+    table.rows[0]._tr.get_or_add_trPr().append(OxmlElement('w:tblHeader'))
     header = ['Подход', 'Срок, мес.', 'Стоимость, %']
     rows = [
         ['Готовый конструктор', '1', '40'],
@@ -328,10 +403,9 @@ def build(path):
     para(doc, 'Таким образом, спроектированная структура веб-сайта охватывает '
          'все ключевые задачи компании, а выбранный подход к реализации '
          'оптимален по срокам и стоимости.')
-    para(doc)
-    para(doc)
+    _double_spacing_before_subheading(doc)
     para(doc, '2.2. Программная реализация и тестирование веб-сайта',
-         align=CENTER, bold=True)
+         align=CENTER, bold=True, style='Heading 2')
     para(doc)
     para(doc, 'Оценка суммарных трудозатрат на разработку веб-сайта '
          'производится по формуле:')
@@ -363,7 +437,8 @@ def build(path):
          'прошёл функциональное тестирование и полностью удовлетворяет '
          'поставленным требованиям.')
 
-    para(doc, 'ЗАКЛЮЧЕНИЕ', align=CENTER, bold=True, page_break=True)
+    para(doc, 'ЗАКЛЮЧЕНИЕ', align=CENTER, bold=True, page_break=True,
+         style='Heading 1')
     para(doc)
     para(doc, 'В ходе выполнения курсовой работы были решены все поставленные '
          'задачи: проведён анализ предметной области и требований заказчика, '
@@ -393,7 +468,7 @@ def build(path):
          'с корпоративным мессенджером.')
 
     para(doc, 'СПИСОК ИСТОЧНИКОВ И ЛИТЕРАТУРЫ', align=CENTER, bold=True,
-         page_break=True)
+         page_break=True, style='Heading 1')
     para(doc)
     sources = [
         '1. Васильев, А. Н. Разработка веб-приложений на языке Python: '
@@ -422,10 +497,10 @@ def build(path):
     for source in sources:
         para(doc, source, first_indent=Cm(0))
 
-    doc.add_section(WD_SECTION.NEW_PAGE)
+    _add_section(doc)
 
     # --- Секция 4: приложение -----------------------------------------
-    para(doc, 'ПРИЛОЖЕНИЕ А', align=RIGHT, bold=True)
+    para(doc, 'ПРИЛОЖЕНИЕ А', align=RIGHT, bold=True, style='Heading 1')
     para(doc, 'Листинг главной страницы веб-сайта (фрагмент):',
          spacing=1.0, size=Pt(12))
     for line in [
