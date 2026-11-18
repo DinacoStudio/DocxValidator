@@ -65,8 +65,21 @@ def standard_rules() -> List[BaseRule]:
 
 
 def gost_19_201_rules() -> List[BaseRule]:
-    """Возвращает стандартный набор с профильными правилами ГОСТ 19.201-78."""
-    return standard_rules() + [
+    """Стандартный набор с профильными правилами ГОСТ 19.201-78.
+
+    Правила курсовой работы, не предусмотренные структурой ТЗ
+    (введение с объектом/предметом, список источников, ссылки [N],
+    выводы «Таким образом» в конце параграфов), в этом профиле не
+    запускаются: по ГОСТ 19.201-78 они обязательными разделами не являются.
+    """
+    coursework_only = (
+        IntroductionContentRule,
+        ReferencesListRule,
+        SourceReferencesRule,
+        ParagraphConclusionRule,
+    )
+    return [rule for rule in standard_rules()
+            if type(rule) not in coursework_only] + [
         AnnotationRule(),
         Gost19201StructureRule(),
         TechnicalSpecificationRequisitesRule(),
