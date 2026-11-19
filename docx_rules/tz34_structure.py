@@ -13,6 +13,7 @@ from typing import List, Optional, Tuple
 from docx import Document
 
 from docx_rules.base import BaseRule, Severity, Violation
+from docx_rules.classification import classify_paragraphs
 
 # Номера разделов/подразделов и завершающие точки-двоеточия срезаются,
 # пробелы схлопываются: «7. Требования к документированию» → «ТРЕБОВАНИЯ К ДОКУМЕНТИРОВАНИЮ».
@@ -49,7 +50,8 @@ class Tz34StructureRule(BaseRule):
         rule_name = self.__class__.__name__
 
         headings = [(_clean_heading(p.text), index + 1)
-                    for index, p in enumerate(doc.paragraphs) if p.text.strip()]
+                    for index, p in enumerate(classify_paragraphs(doc))
+                    if p.text.strip() and not p.is_title_page and not p.is_toc]
         found: List[Tuple[str, Optional[int]]] = []
 
         for label, variants in self.REQUIRED_SECTIONS:

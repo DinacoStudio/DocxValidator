@@ -14,7 +14,7 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH
 
 from docx_rules.base import BaseRule, Severity, Violation
 from docx_rules.classification import classify_paragraphs
-from docx_rules.helpers import is_word_heading
+from docx_rules.helpers import effective
 
 
 class Tz34TitlePageRule(BaseRule):
@@ -32,9 +32,10 @@ class Tz34TitlePageRule(BaseRule):
         paragraphs = classify_paragraphs(doc)
         first_body = next((i for i, p in enumerate(paragraphs) if not p.is_title_page), None)
         if not first_body:
-            # Титул не распознан (нет «Содержания», «Литеры», «Аннотации» и т.п.) —
-            # правило не может отличить титул от текста, не сообщаем ничего.
-            return violations
+            # Без надёжной границы нельзя проверять реквизиты по всему документу.
+            return [Violation(rule_name, Severity.WARNING, "Титульный лист",
+                              "Не удалось определить границу титульного листа; "
+                              "проверьте его реквизиты вручную.")]
 
         title_paras = paragraphs[:first_body]
         title_texts = [p.text.strip() for p in title_paras if p.text.strip()]
@@ -75,6 +76,6 @@ class Tz34TitlePageRule(BaseRule):
         runs = [r for r in paragraph.runs if r.text.strip()]
         if not runs:
             return False
-        bold = all(r.font.bold for r in runs)
-        centered = paragraph.alignment == WD_ALIGN_PARAGRAPH.CENTER
+        bold = all(effective(paragraph, 'bold', r) for r in runs)
+        centered = effective(paragraph, 'alignment') == WD_ALIGN_PARAGRAPH.CENTER
         return bold and centered

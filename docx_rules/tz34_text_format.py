@@ -10,7 +10,8 @@ import re
 from typing import List
 
 from docx import Document
-from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_LINE_SPACING
+from docx.shared import Length
 
 from docx_rules.base import BaseRule, Severity, Violation
 from docx_rules.classification import classify_paragraphs
@@ -52,19 +53,27 @@ class Tz34TextFormatRule(BaseRule):
             loc = f"Абзац {idx} ('{text[:30]}...')"
 
             for run in runs:
-                font_name = run.font.name
+                font_name = effective(paragraph, 'name', run)
                 if font_name and font_name != FONT_NAME:
                     violations.append(Violation(
                         rule_name, Severity.ERROR, loc,
                         f"Шрифт '{font_name}', а должен быть '{FONT_NAME}'."))
-                size = run.font.size.pt if run.font.size else None
-                if size and abs(size - FONT_SIZE) > 0.1:
+                font_size = effective(paragraph, 'size', run)
+                size = font_size.pt if font_size is not None else None
+                if size is not None and abs(size - FONT_SIZE) > 0.1:
                     violations.append(Violation(
                         rule_name, Severity.ERROR, loc,
                         f"Размер шрифта {size} pt, а должен быть {FONT_SIZE} pt."))
 
-            line_spacing = paragraph.paragraph_format.line_spacing
-            if line_spacing is not None and abs(float(line_spacing) - LINE_SPACING) > SPACING_TOLERANCE:
+            line_spacing = effective(paragraph, 'line_spacing')
+            if isinstance(line_spacing, Length):
+                spacing_rule = effective(paragraph, 'line_spacing_rule')
+                kind = 'минимум' if spacing_rule == WD_LINE_SPACING.AT_LEAST else 'точно'
+                violations.append(Violation(
+                    rule_name, Severity.ERROR, loc,
+                    f"Междустрочный интервал {kind} {line_spacing.pt:g} пт, "
+                    f"ожидается полуторный ({LINE_SPACING})."))
+            elif line_spacing is not None and abs(line_spacing - LINE_SPACING) > SPACING_TOLERANCE:
                 violations.append(Violation(
                     rule_name, Severity.ERROR, loc,
                     f"Междустрочный интервал {line_spacing}, ожидается {LINE_SPACING}."))
@@ -76,13 +85,13 @@ class Tz34TextFormatRule(BaseRule):
 
             # Служебные реквизиты (по правому краю) и подписи (по центру)
             # допустимы; выравнивание влево — отступление от образца.
-            alignment = paragraph.paragraph_format.alignment
+            alignment = effective(paragraph, 'alignment')
             if alignment == WD_ALIGN_PARAGRAPH.LEFT:
                 violations.append(Violation(
                     rule_name, Severity.WARNING, loc,
                     "Выравнивание текста должно быть по ширине (JUSTIFY)."))
 
-            indent = paragraph.paragraph_format.first_line_indent
+            indent = effective(paragraph, 'first_line_indent')
             if indent is not None and abs(indent.cm - INDENT_CM) > INDENT_TOLERANCE_CM:
                 violations.append(Violation(
                     rule_name, Severity.WARNING, loc,

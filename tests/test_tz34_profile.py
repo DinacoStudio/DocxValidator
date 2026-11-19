@@ -110,6 +110,7 @@ class Tz34TextFormatRuleTests(unittest.TestCase):
             run.font.name = 'Times New Roman'
             run.font.size = Pt(14)
         heading = doc.add_paragraph('1. Требования к системе')
+        heading.paragraph_format.line_spacing = 1.5
         for run in heading.runs:
             run.font.bold = True
             run.font.name = 'Times New Roman'
@@ -131,7 +132,10 @@ class Tz34TextFormatRuleTests(unittest.TestCase):
     def test_table_labels_are_skipped(self):
         doc = Document()
         doc.add_paragraph('СОДЕРЖАНИЕ')
-        doc.add_paragraph('ВВЕДЕНИЕ')  # сбрасывает режим оглавления
+        introduction = doc.add_paragraph('ВВЕДЕНИЕ')  # сбрасывает режим оглавления
+        introduction.paragraph_format.line_spacing = 1.5
+        introduction.runs[0].font.name = 'Times New Roman'
+        introduction.runs[0].font.size = Pt(14)
         doc.add_paragraph('Таблица 1')
         doc.add_paragraph('Продолжение таблицы 1')
         self.assertEqual([], Tz34TextFormatRule().check(doc))
