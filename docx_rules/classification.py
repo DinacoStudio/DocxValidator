@@ -27,7 +27,10 @@ def classify_paragraphs(doc: Document) -> List:
             in_toc = False
         p.is_title_page = i < first
         p.is_toc = in_toc or is_toc_line(text)
-        if not p.is_toc and re.match(r'^ПРИЛОЖЕНИЕ\b', text, re.I):
+        # Раздел приложений начинается только после титульного листа: на титулах
+        # технических заданий (ГОСТ 19.104) слово «Приложение …» — часть названия
+        # документа, а не заголовок раздела приложений.
+        if not p.is_toc and i >= first and re.match(r'^ПРИЛОЖЕНИЕ\b', text, re.I):
             in_appendix = True
         p.is_appendix = in_appendix
         p.is_special = (is_heading(text) or in_appendix

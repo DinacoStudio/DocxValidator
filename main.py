@@ -38,8 +38,8 @@ def build_parser() -> ArgumentParser:
     parser.add_argument("input_file", help="Путь до Word документа")
     parser.add_argument(
         "--profile",
-        choices=("standard", "gost-19-201"),
-        default="standard",
+        choices=profiles.PROFILE_NAMES,
+        default=profiles.PROFILE_STANDARD,
         help="Профиль проверки (по умолчанию: standard)",
     )
     parser.add_argument(

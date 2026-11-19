@@ -29,7 +29,11 @@ class BreaksAndPaginationRule(BaseRule):
     def check(self, doc: Document) -> List[Violation]:
         violations: List[Violation] = []
         rule_name = 'BreaksAndPaginationRule'
-        paragraphs = doc.paragraphs
+        paragraphs = classify_paragraphs(doc)
+        # Титульный лист существует, если есть хотя бы один абзац после него:
+        # пустые серии на титуле — норма свободной вёрстки (например, «Листов 20»,
+        # год и подписи в ТЗ по ГОСТ 19.104), их не сообщаем.
+        title_exists = any(not p.is_title_page for p in paragraphs)
 
         empty_start = None
         for idx, paragraph in enumerate(paragraphs):
@@ -46,7 +50,8 @@ class BreaksAndPaginationRule(BaseRule):
                 # заголовок раздела — норма, а не нарушение (иначе правило
                 # противоречит SectionFormatRule, требующему ровно 2 Enter'а).
                 follows_heading = (not is_plain_empty and self._is_heading_after_gap(paragraphs[idx]))
-                if count >= 2 and not (count == 2 and follows_heading):
+                on_title_page = title_exists and paragraphs[empty_start].is_title_page
+                if count >= 2 and not (count == 2 and follows_heading) and not on_title_page:
                     violations.append(Violation(
                         rule_name, Severity.WARNING,
                         f'Абзацы {empty_start + 1}–{end + 1}',

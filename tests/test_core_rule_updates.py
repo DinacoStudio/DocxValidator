@@ -126,12 +126,13 @@ class TableOfContentsRuleUpdatesTests(unittest.TestCase):
 class BreaksAndPaginationRuleTests(unittest.TestCase):
     def test_reports_suspicious_breaks_and_pagination_as_warnings(self):
         doc = Document()
+        doc.add_paragraph('ВВЕДЕНИЕ')
         doc.add_paragraph('Текст').add_run().add_break()
         doc.add_paragraph('')
         doc.add_paragraph('')
         body = doc.add_paragraph('Основной текст')
         body.paragraph_format.widow_control = False
-        heading = doc.add_paragraph('ВВЕДЕНИЕ')
+        heading = doc.add_paragraph('ЗАКЛЮЧЕНИЕ')
         heading.paragraph_format.keep_with_next = False
         page = doc.add_paragraph('Следующая страница')
         page.add_run().add_break(WD_BREAK.PAGE)

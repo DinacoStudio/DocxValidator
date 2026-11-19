@@ -31,6 +31,9 @@ from docx_rules.formulas import FormulasRule
 from docx_rules.lists_format import ListsFormatRule
 from docx_rules.dashes import DashesRule
 from docx_rules.white_fill import WhiteFillRule
+from docx_rules.tz34_title import Tz34TitlePageRule
+from docx_rules.tz34_structure import Tz34StructureRule
+from docx_rules.tz34_text_format import Tz34TextFormatRule
 
 __all__ = [
     'BaseRule', 'Severity', 'Violation', 'classify_paragraphs',
@@ -42,5 +45,6 @@ __all__ = [
     'ReferencesListRule', 'IntroductionContentRule', 'ParagraphConclusionRule',
     'SourceReferencesRule', 'AppendixFormatRule', 'FiguresRule', 'TablesFormatRule',
     'FormulasRule', 'ListsFormatRule', 'DashesRule', 'WhiteFillRule',
-    'BreaksAndPaginationRule',
+    'BreaksAndPaginationRule', 'Tz34TitlePageRule', 'Tz34StructureRule',
+    'Tz34TextFormatRule',
 ]

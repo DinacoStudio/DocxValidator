@@ -20,9 +20,13 @@ class TablesFormatRule(BaseRule):
     NATURAL_REF_REGEX = re.compile(r'(?<![\w(])в\s+таблице\s+(\d+)\b', re.IGNORECASE)
     REQUIRED_BORDERS = ('top', 'left', 'bottom', 'right', 'insideH', 'insideV')
 
-    def __init__(self, target_font_name: str = "Times New Roman", target_font_size: float = 14.0):
+    def __init__(self, target_font_name: str = "Times New Roman", target_font_size: float = 14.0,
+                 require_header_repeat: bool = True):
         self.font_name = target_font_name
         self.font_size = target_font_size
+        # Требовать w:tblHeader (повторение шапки на новых страницах) можно не
+        # всегда: в ТЗ по образцу таблицы короткие и повторение шапки не практикуется.
+        self.require_header_repeat = require_header_repeat
 
     @staticmethod
     def _body_sequence(paragraphs: List, tables: List):
@@ -113,11 +117,26 @@ class TablesFormatRule(BaseRule):
         paragraphs = classify_paragraphs(doc)
         items = self._body_sequence(paragraphs, doc.tables)
 
+        # Таблицы на титульном листе (лист согласования «Подп. и дата» по ГОСТ 19.104)
+        # — часть титула, а не табличные данные: их оформление не проверяем и в
+        # сквозную нумерацию таблиц они не входят.
+        title_table_indexes = set()
+        first_body_p = next((i for i, p in enumerate(paragraphs) if not p.is_title_page), None)
+        if first_body_p is not None:
+            for kind, obj, obj_idx in items:
+                if kind == 'p' and obj_idx == first_body_p:
+                    break
+                if kind == 'tbl':
+                    title_table_indexes.add(obj_idx)
+
         labeled_numbers = []
         referenced_numbers = []
 
         for pos, (kind, obj, obj_idx) in enumerate(items):
             if kind != 'tbl':
+                continue
+
+            if obj_idx in title_table_indexes:
                 continue
 
             table = obj
@@ -172,8 +191,8 @@ class TablesFormatRule(BaseRule):
                     "У таблицы должны быть видимые внешние и внутренние границы "
                     f"(не найдены: {', '.join(missing_borders)})."))
             # У короткой таблицы нет перехода на следующую страницу; повторяемую шапку
-            # требуем только там, где она потенциально нужна.
-            if len(table.rows) > 2 and not self._first_row_repeats(table):
+            # требуем только там, где она потенциально нужна и включена в профиле.
+            if self.require_header_repeat and len(table.rows) > 2 and not self._first_row_repeats(table):
                 violations.append(Violation(
                     rule_name, Severity.WARNING, table_loc,
                     "Первая строка таблицы должна быть помечена w:tblHeader для повторения шапки на следующих страницах."))
